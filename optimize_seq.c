@@ -9,24 +9,12 @@
 
 // Use 0 to retain the original number of color channels
 #define COLOR_CHANNELS 0
-#define CHANNELS 3
-
-void copy_image(unsigned char *image_out, const unsigned char *image_in, size_t size)
-{
-
-    //#pragma omp parallel for
-    for (size_t i = 0; i < size; ++i)
-    {
-        image_out[i] = image_in[i];
-    }
-}
-
 
 // Ta je za uporabo pri izračun energije/odvodov slike.
 // Stride pove kateri barvni kanal želiš. npr. v rgb prostoru bi z stride 0 dobil R kanal z stride 1 pa B kanal
 unsigned char get_pixel(unsigned char *image, int y,int x,
                         int width,int height,int stride,
-                        int org_width){
+                        int org_width, int cpp){
 
     if(x>=width)
         x=width-1;
@@ -40,7 +28,7 @@ unsigned char get_pixel(unsigned char *image, int y,int x,
     if(0>y)
         y=0;
 
-    return image[((x+org_width*y)*CHANNELS)+stride];
+    return image[((x+org_width*y)*cpp)+stride];
 }
 
 unsigned int get_pixel_cumulative_ver(unsigned int *image, int y,int x,int width,int height,int org_width){
@@ -55,35 +43,44 @@ unsigned char min(unsigned char a,unsigned char b){
     return (a < b) ? a : b;
 }
 
-
-void calc_image_energy(unsigned char *image_out, const unsigned char *image_in,unsigned int width,
+void gray_scale_image(unsigned char *image_out, const unsigned char *image_in,unsigned int width,
                        unsigned int height,unsigned int org_width,unsigned int cpp)
 {
-    //#pragma omp parallel for
+//#pragma omp parallel for
+    for (int i = 0; i < org_width * height; i++) {
+        // Average the RGB channels to get grayscale value
+        int index = i * cpp;
+        unsigned char r = image_in[index];
+        unsigned char g = image_in[index + 1];
+        unsigned char b = image_in[index + 2];
+        image_out[i] = (unsigned char)((r + g + b) / 3);
+    }
+}
+
+void calc_image_energy(unsigned char *image_out, const unsigned char *image_in,unsigned int width,
+                       unsigned int height,unsigned int org_width)
+{
+//#pragma omp parallel for
     for (unsigned int y = 0; y < height; y++) {
         for (unsigned int x = 0; x < width; x++) {
-            unsigned int sum = 0;
-            for (int c = 0; c < cpp; c++) {
-                int Gx = -get_pixel(image_in,y-1,x-1,width,height,c,org_width)
-                         -2*get_pixel(image_in,y,x-1,width,height,c,org_width)
-                         -get_pixel(image_in,y+1,x-1,width,height,c,org_width)
-                         +get_pixel(image_in,y-1,x+1,width,height,c,org_width)
-                         +2*get_pixel(image_in,y,x+1,width,height,c,org_width)
-                         +get_pixel(image_in,y+1,x+1,width,height,c,org_width);
+            int Gx = -get_pixel(image_in,y-1,x-1,width,height,0,org_width,1)
+                    -2*get_pixel(image_in,y,x-1,width,height,0,org_width,1)
+                    -get_pixel(image_in,y+1,x-1,width,height,0,org_width,1)
+                    +get_pixel(image_in,y-1,x+1,width,height,0,org_width,1)
+                    +2*get_pixel(image_in,y,x+1,width,height,0,org_width,1)
+                    +get_pixel(image_in,y+1,x+1,width,height,0,org_width,1);
 
-                int Gy = +get_pixel(image_in,y-1,x-1,width,height,c,org_width)
-                         +2*get_pixel(image_in,y-1,x,width,height,c,org_width)
-                         +get_pixel(image_in,y-1,x+1,width,height,c,org_width)
-                         -get_pixel(image_in,y+1,x-1,width,height,c,org_width)
-                         -2*get_pixel(image_in,y+1,x,width,height,c,org_width)
-                         -get_pixel(image_in,y+1,x+1,width,height,c,org_width);
+                int Gy = +get_pixel(image_in,y-1,x-1,width,height,0,org_width,1)
+                         +2*get_pixel(image_in,y-1,x,width,height,0,org_width,1)
+                         +get_pixel(image_in,y-1,x+1,width,height,0,org_width,1)
+                         -get_pixel(image_in,y+1,x-1,width,height,0,org_width,1)
+                         -2*get_pixel(image_in,y+1,x,width,height,0,org_width,1)
+                         -get_pixel(image_in,y+1,x+1,width,height,0,org_width,1);
 
-                sum +=  (unsigned char )sqrt((Gx*Gx) + (Gy*Gy));
-            }
-
-            image_out[x+org_width*y] = sum/cpp;
+                image_out[x+org_width*y] = (unsigned char )sqrt((Gx*Gx) + (Gy*Gy));
         }
     }
+
 }
 
 void calc_energy_cumulative_basic(unsigned int *out_image,const unsigned char* energy_image,
@@ -146,10 +143,10 @@ void seams_basic(unsigned int *path, unsigned int* energy_cumulative_image, unsi
                 image_in[(y * org_width + x) * cpp + c] = image_in[(y * org_width + x + 1) * cpp + c];
             }
         }
-
-//        image_in[(seam_index + org_width * y) * CHANNELS]       = (unsigned char) 255;
-//        image_in[((seam_index + org_width * y) * CHANNELS) + 1] = (unsigned char) 0;
-//        image_in[((seam_index + org_width * y) * CHANNELS) + 2] = (unsigned char) 0;
+//
+//        image_in[(seam_index + org_width * y) * cpp]       = (unsigned char) 255;
+//        image_in[((seam_index + org_width * y) * cpp) + 1] = (unsigned char) 0;
+//        image_in[((seam_index + org_width * y) * cpp) + 2] = (unsigned char) 0;
     }
 }
 
@@ -180,17 +177,18 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
     printf("Loaded image %s of size %dx%d.\n", image_in_name, width, height);
-    const size_t datasize = width * height * cpp * sizeof(unsigned char);
+    //const size_t datasize = width * height * cpp * sizeof(unsigned char);
     unsigned char *image_out = (unsigned char *)malloc((width-num_seams) * height * cpp * sizeof(unsigned char));
+    unsigned char *image_gray = (unsigned char *)malloc(width * height * sizeof(unsigned char));
     unsigned char *energy_image = (unsigned char *)malloc(width * height * sizeof(unsigned char));
     unsigned int *energy_cumulative_image = (unsigned int *)malloc(width * height * sizeof(unsigned int));
     //unsigned int *topIndexOrder = (unsigned int *)malloc(width * sizeof(unsigned int));
     unsigned int *path = (unsigned int *)malloc(height * sizeof(unsigned int));
 
     //Print the number of threads
-    #pragma omp parallel
+#pragma omp parallel
     {
-        #pragma omp single
+#pragma omp single
         printf("Using %d threads",omp_get_num_threads());
     }
 
@@ -199,8 +197,9 @@ int main(int argc, char *argv[])
     double start = omp_get_wtime();
     int org_width = width;
     for(int i=0; i < num_seams; i++) {
-
-        calc_image_energy(energy_image, image_in, width, height,org_width,cpp);
+        gray_scale_image(image_gray, image_in, width, height,org_width,cpp);
+        //stbi_write_png("output_grayImage.png", width, height, 1, image_gray, org_width);
+        calc_image_energy(energy_image, image_gray, width, height,org_width);
         //stbi_write_png("output_energyImage.png", width, height, 1, energy_image, org_width);
         calc_energy_cumulative_basic(energy_cumulative_image, energy_image, width, height,org_width);
         //stbi_write_png("output_energyCumImage.png", width, height, 1, energy_cumulative_image, org_width);
@@ -209,7 +208,6 @@ int main(int argc, char *argv[])
 
     }
 
-    //#pragma omp parallel for
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
             for (int c = 0; c < cpp; c++) {
