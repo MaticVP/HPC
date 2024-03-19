@@ -40,11 +40,6 @@ unsigned int get_pixel_cumulative_ver(unsigned int *image, int y,int x,int width
     return image[x+org_width*y];
 }
 
-unsigned char min(unsigned char a,unsigned char b){
-    return (a < b) ? a : b;
-}
-
-
 void calc_image_energy(unsigned char *image_out, const unsigned char *image_in,unsigned int width,
                        unsigned int height,unsigned int org_width,unsigned int cpp)
 {
@@ -91,7 +86,14 @@ void calc_energy_cumulative_basic(unsigned int *out_image,const unsigned char* e
             unsigned int bottom_left  = get_pixel_cumulative_ver(out_image,  y + 1,x - 1, width, height,org_width);
             unsigned int bottom_mid   = get_pixel_cumulative_ver(out_image,   y + 1,  x, width, height,org_width);
             unsigned int bottom_right = get_pixel_cumulative_ver(out_image, y + 1, x + 1, width, height,org_width);
-            unsigned int value = energy_image[x + org_width * y] + min(bottom_left,min(bottom_mid,bottom_right));
+            unsigned int smallest_value = bottom_mid;
+            if(bottom_left<smallest_value){
+                smallest_value = bottom_left;
+            }
+            if(bottom_right<smallest_value){
+                smallest_value = bottom_right;
+            }
+            unsigned int value = energy_image[x + org_width * y] + smallest_value;
             out_image[x + org_width * y] = value;
         }
         #pragma omp barrier
