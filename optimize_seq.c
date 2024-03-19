@@ -47,7 +47,7 @@ void gray_scale_image(unsigned char *image_out, const unsigned char *image_in,un
                        unsigned int height,unsigned int org_width,unsigned int cpp)
 {
 //#pragma omp parallel for
-    for (int i = 0; i < org_width * height; i++) {
+    for (int i = 0; i < width * height; i++) {
         // Average the RGB channels to get grayscale value
         int index = i * cpp;
         unsigned char r = image_in[index];
@@ -126,10 +126,14 @@ void seams_basic(unsigned int *path, unsigned int* energy_cumulative_image, unsi
         unsigned int bottom_left = get_pixel_cumulative_ver(energy_cumulative_image,  y + 1,smallest_index - 1, width, height,org_width);
         unsigned int bottom_mid  = get_pixel_cumulative_ver(energy_cumulative_image,  y + 1,  smallest_index, width, height,org_width);
         unsigned int bottom_right = get_pixel_cumulative_ver(energy_cumulative_image, y + 1,smallest_index + 1, width, height,org_width);
-        if(bottom_left<bottom_mid){
+
+        smallest_value = bottom_mid;
+
+        if(bottom_left<smallest_value){
+            smallest_value = bottom_left;
             smallest_index = smallest_index-1;
         }
-        else if(bottom_right<bottom_mid){
+        if(bottom_right<smallest_value){
             smallest_index = smallest_index + 1;
         }
     }
@@ -198,7 +202,7 @@ int main(int argc, char *argv[])
     int org_width = width;
     for(int i=0; i < num_seams; i++) {
         gray_scale_image(image_gray, image_in, width, height,org_width,cpp);
-        //stbi_write_png("output_grayImage.png", width, height, 1, image_gray, org_width);
+        stbi_write_png("output_grayImage.png", width, height, 1, image_gray, org_width);
         calc_image_energy(energy_image, image_gray, width, height,org_width);
         //stbi_write_png("output_energyImage.png", width, height, 1, energy_image, org_width);
         calc_energy_cumulative_basic(energy_cumulative_image, energy_image, width, height,org_width);

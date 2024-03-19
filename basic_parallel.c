@@ -133,10 +133,13 @@ void seams_basic(unsigned int *path, unsigned int* energy_cumulative_image, unsi
         unsigned int bottom_left = get_pixel_cumulative_ver(energy_cumulative_image,  y + 1,smallest_index - 1, width, height,org_width);
         unsigned int bottom_mid  = get_pixel_cumulative_ver(energy_cumulative_image,  y + 1,  smallest_index, width, height,org_width);
         unsigned int bottom_right = get_pixel_cumulative_ver(energy_cumulative_image, y + 1,smallest_index + 1, width, height,org_width);
-        if(bottom_left<bottom_mid){
+        smallest_value = bottom_mid;
+
+        if(bottom_left<smallest_value){
+            smallest_value = bottom_left;
             smallest_index = smallest_index-1;
         }
-        else if(bottom_right<bottom_mid){
+        if(bottom_right<smallest_value){
             smallest_index = smallest_index + 1;
         }
     }
