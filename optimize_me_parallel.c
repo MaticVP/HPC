@@ -9,12 +9,13 @@
 
 // Use 0 to retain the original number of color channels
 #define COLOR_CHANNELS 0
+#define CHANNELS 3
 
 // Ta je za uporabo pri izračun energije/odvodov slike.
 // Stride pove kateri barvni kanal želiš. npr. v rgb prostoru bi z stride 0 dobil R kanal z stride 1 pa B kanal
 unsigned char get_pixel(unsigned char *image, int y,int x,
                         int width,int height,int stride,
-                        int org_width, int cpp){
+                        int org_width,unsigned int cpp){
 
     if(x>=width)
         x=width-1;
@@ -40,9 +41,9 @@ unsigned int get_pixel_cumulative_ver(unsigned int *image, int y,int x,int width
 }
 
 void gray_scale_image(unsigned char *image_out, const unsigned char *image_in,unsigned int width,
-                       unsigned int height,unsigned int org_width,unsigned int cpp)
+                      unsigned int height,unsigned int org_width,unsigned int cpp)
 {
-//#pragma omp parallel for
+#pragma omp parallel for
     for (int i = 0; i < org_width * height; i++) {
         // Average the RGB channels to get grayscale value
         int index = i * cpp;
@@ -56,39 +57,41 @@ void gray_scale_image(unsigned char *image_out, const unsigned char *image_in,un
 void calc_image_energy(unsigned char *image_out, const unsigned char *image_in,unsigned int width,
                        unsigned int height,unsigned int org_width)
 {
-//#pragma omp parallel for
+#pragma omp parallel for
     for (unsigned int y = 0; y < height; y++) {
         for (unsigned int x = 0; x < width; x++) {
             int Gx = -get_pixel(image_in,y-1,x-1,width,height,0,org_width,1)
-                    -2*get_pixel(image_in,y,x-1,width,height,0,org_width,1)
-                    -get_pixel(image_in,y+1,x-1,width,height,0,org_width,1)
-                    +get_pixel(image_in,y-1,x+1,width,height,0,org_width,1)
-                    +2*get_pixel(image_in,y,x+1,width,height,0,org_width,1)
-                    +get_pixel(image_in,y+1,x+1,width,height,0,org_width,1);
+                     -2*get_pixel(image_in,y,x-1,width,height,0,org_width,1)
+                     -get_pixel(image_in,y+1,x-1,width,height,0,org_width,1)
+                     +get_pixel(image_in,y-1,x+1,width,height,0,org_width,1)
+                     +2*get_pixel(image_in,y,x+1,width,height,0,org_width,1)
+                     +get_pixel(image_in,y+1,x+1,width,height,0,org_width,1);
 
-                int Gy = +get_pixel(image_in,y-1,x-1,width,height,0,org_width,1)
-                         +2*get_pixel(image_in,y-1,x,width,height,0,org_width,1)
-                         +get_pixel(image_in,y-1,x+1,width,height,0,org_width,1)
-                         -get_pixel(image_in,y+1,x-1,width,height,0,org_width,1)
-                         -2*get_pixel(image_in,y+1,x,width,height,0,org_width,1)
-                         -get_pixel(image_in,y+1,x+1,width,height,0,org_width,1);
+            int Gy = +get_pixel(image_in,y-1,x-1,width,height,0,org_width,1)
+                     +2*get_pixel(image_in,y-1,x,width,height,0,org_width,1)
+                     +get_pixel(image_in,y-1,x+1,width,height,0,org_width,1)
+                     -get_pixel(image_in,y+1,x-1,width,height,0,org_width,1)
+                     -2*get_pixel(image_in,y+1,x,width,height,0,org_width,1)
+                     -get_pixel(image_in,y+1,x+1,width,height,0,org_width,1);
 
-                image_out[x+org_width*y] = (unsigned char )sqrt((Gx*Gx) + (Gy*Gy));
+            image_out[x+org_width*y] = (unsigned char )sqrt((Gx*Gx) + (Gy*Gy));
         }
     }
+
 }
 
 void calc_energy_cumulative_basic(unsigned int *out_image,const unsigned char* energy_image,
                                   unsigned int width,unsigned int height, unsigned int org_width){
 
-    //#pragma omp parallel for
+#pragma omp parallel for
     for (int x = 0; x < width; x++) {
         out_image[x + org_width * (height-1)] = energy_image[x+org_width*(height-1)];
     }
 
     for (int y = height-2; y >= 0; y--) {
         //Threading je slow. Bug?
-        //#pragma omp parallel for
+        // Če ne uporabim thread tukaj sem za 5s hitrejši
+//#pragma omp parallel for
         for (int x = 0; x < width; x++) {
             unsigned int bottom_left  = get_pixel_cumulative_ver(out_image,  y + 1,x - 1, width, height,org_width);
             unsigned int bottom_mid   = get_pixel_cumulative_ver(out_image,   y + 1,  x, width, height,org_width);
@@ -103,7 +106,7 @@ void calc_energy_cumulative_basic(unsigned int *out_image,const unsigned char* e
             unsigned int value = energy_image[x + org_width * y] + smallest_value;
             out_image[x + org_width * y] = value;
         }
-        //#pragma omp barrier
+//#pragma omp barrier
     }
 }
 
@@ -112,23 +115,36 @@ void seams_basic(unsigned int *path, unsigned int* energy_cumulative_image, unsi
     unsigned int smallest_index = UINT_MAX;
     unsigned int smallest_value = UINT_MAX;
     //find new smallest value
-    //#pragma omp parallel for
-    for (int i = 0; i < width; i++) {
-        if(smallest_value>energy_cumulative_image[i]) {
-            smallest_value = energy_cumulative_image[i];
-            smallest_index = i;
+
+
+#pragma omp parallel
+    {
+        unsigned int private_smallest_value = UINT_MAX;
+        unsigned int private_smallest_index = UINT_MAX;
+
+        for (int i = 0; i < width; i++) {
+            if (private_smallest_value > energy_cumulative_image[i]) {
+                private_smallest_value = energy_cumulative_image[i];
+                private_smallest_index = i;
+            }
+        }
+
+#pragma omp critical
+        {
+            if (private_smallest_value < smallest_value) {
+                smallest_value = private_smallest_value;
+                smallest_index = private_smallest_index;
+            }
         }
     }
 
     //find path
-    //#pragma omp parallel for
     for(int y=0;y<height;y++){
         path[y] = smallest_index;
 
         unsigned int bottom_left = get_pixel_cumulative_ver(energy_cumulative_image,  y + 1,smallest_index - 1, width, height,org_width);
         unsigned int bottom_mid  = get_pixel_cumulative_ver(energy_cumulative_image,  y + 1,  smallest_index, width, height,org_width);
         unsigned int bottom_right = get_pixel_cumulative_ver(energy_cumulative_image, y + 1,smallest_index + 1, width, height,org_width);
-
         smallest_value = bottom_mid;
 
         if(bottom_left<smallest_value){
@@ -141,7 +157,7 @@ void seams_basic(unsigned int *path, unsigned int* energy_cumulative_image, unsi
     }
 
 
-    //#pragma omp parallel for
+#pragma omp parallel for
     for (int y = 0; y < height; y++) {
         int seam_index = path[y];
         for (int x = seam_index; x < width - 1; x++) {
@@ -149,10 +165,10 @@ void seams_basic(unsigned int *path, unsigned int* energy_cumulative_image, unsi
                 image_in[(y * org_width + x) * cpp + c] = image_in[(y * org_width + x + 1) * cpp + c];
             }
         }
-//
-//        image_in[(seam_index + org_width * y) * cpp]       = (unsigned char) 255;
-//        image_in[((seam_index + org_width * y) * cpp) + 1] = (unsigned char) 0;
-//        image_in[((seam_index + org_width * y) * cpp) + 2] = (unsigned char) 0;
+
+//        image_in[(seam_index + org_width * y) * CHANNELS]       = (unsigned char) 255;
+//        image_in[((seam_index + org_width * y) * CHANNELS) + 1] = (unsigned char) 0;
+//        image_in[((seam_index + org_width * y) * CHANNELS) + 2] = (unsigned char) 0;
     }
 }
 
@@ -183,7 +199,7 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
     printf("Loaded image %s of size %dx%d.\n", image_in_name, width, height);
-    //const size_t datasize = width * height * cpp * sizeof(unsigned char);
+    const size_t datasize = width * height * cpp * sizeof(unsigned char);
     unsigned char *image_out = (unsigned char *)malloc((width-num_seams) * height * cpp * sizeof(unsigned char));
     unsigned char *image_gray = (unsigned char *)malloc(width * height * sizeof(unsigned char));
     unsigned char *energy_image = (unsigned char *)malloc(width * height * sizeof(unsigned char));
@@ -214,6 +230,7 @@ int main(int argc, char *argv[])
 
     }
 
+#pragma omp parallel for
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
             for (int c = 0; c < cpp; c++) {

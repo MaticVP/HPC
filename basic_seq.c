@@ -124,7 +124,7 @@ void seams_basic(unsigned int *path, unsigned int* energy_cumulative_image, unsi
 
         if(bottom_left<smallest_value){
             smallest_value = bottom_left;
-            smallest_index = smallest_index-1;
+            smallest_index = smallest_index - 1;
         }
         if(bottom_right<smallest_value){
             smallest_index = smallest_index + 1;

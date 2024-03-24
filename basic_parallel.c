@@ -15,7 +15,7 @@
 // Stride pove kateri barvni kanal želiš. npr. v rgb prostoru bi z stride 0 dobil R kanal z stride 1 pa B kanal
 unsigned char get_pixel(unsigned char *image, int y,int x,
                         int width,int height,int stride,
-                        int org_width){
+                        int org_width,unsigned int cpp){
 
     if(x>=width)
         x=width-1;
@@ -29,7 +29,7 @@ unsigned char get_pixel(unsigned char *image, int y,int x,
     if(0>y)
         y=0;
 
-    return image[((x+org_width*y)*CHANNELS)+stride];
+    return image[((x+org_width*y)*cpp)+stride];
 }
 
 unsigned int get_pixel_cumulative_ver(unsigned int *image, int y,int x,int width,int height,int org_width){
@@ -43,24 +43,24 @@ unsigned int get_pixel_cumulative_ver(unsigned int *image, int y,int x,int width
 void calc_image_energy(unsigned char *image_out, const unsigned char *image_in,unsigned int width,
                        unsigned int height,unsigned int org_width,unsigned int cpp)
 {
-    #pragma omp parallel for
+    #pragma omp parallel for collapse(2)
     for (unsigned int y = 0; y < height; y++) {
         for (unsigned int x = 0; x < width; x++) {
             unsigned int sum = 0;
             for (int c = 0; c < cpp; c++) {
-                int Gx = -get_pixel(image_in,y-1,x-1,width,height,c,org_width)
-                         -2*get_pixel(image_in,y,x-1,width,height,c,org_width)
-                         -get_pixel(image_in,y+1,x-1,width,height,c,org_width)
-                         +get_pixel(image_in,y-1,x+1,width,height,c,org_width)
-                         +2*get_pixel(image_in,y,x+1,width,height,c,org_width)
-                         +get_pixel(image_in,y+1,x+1,width,height,c,org_width);
+                int Gx = -get_pixel(image_in,y-1,x-1,width,height,c,org_width,cpp)
+                         -2*get_pixel(image_in,y,x-1,width,height,c,org_width,cpp)
+                         -get_pixel(image_in,y+1,x-1,width,height,c,org_width,cpp)
+                         +get_pixel(image_in,y-1,x+1,width,height,c,org_width,cpp)
+                         +2*get_pixel(image_in,y,x+1,width,height,c,org_width,cpp)
+                         +get_pixel(image_in,y+1,x+1,width,height,c,org_width,cpp);
 
-                int Gy = +get_pixel(image_in,y-1,x-1,width,height,c,org_width)
-                         +2*get_pixel(image_in,y-1,x,width,height,c,org_width)
-                         +get_pixel(image_in,y-1,x+1,width,height,c,org_width)
-                         -get_pixel(image_in,y+1,x-1,width,height,c,org_width)
-                         -2*get_pixel(image_in,y+1,x,width,height,c,org_width)
-                         -get_pixel(image_in,y+1,x+1,width,height,c,org_width);
+                int Gy = +get_pixel(image_in,y-1,x-1,width,height,c,org_width,cpp)
+                         +2*get_pixel(image_in,y-1,x,width,height,c,org_width,cpp)
+                         +get_pixel(image_in,y-1,x+1,width,height,c,org_width,cpp)
+                         -get_pixel(image_in,y+1,x-1,width,height,c,org_width,cpp)
+                         -2*get_pixel(image_in,y+1,x,width,height,c,org_width,cpp)
+                         -get_pixel(image_in,y+1,x+1,width,height,c,org_width,cpp);
 
                 sum +=  (unsigned char )sqrt((Gx*Gx) + (Gy*Gy));
             }
@@ -147,10 +147,9 @@ void seams_basic(unsigned int *path, unsigned int* energy_cumulative_image, unsi
     }
 
 
-    #pragma omp parallel for
+#pragma omp parallel for
     for (int y = 0; y < height; y++) {
-        int seam_index = path[y];
-        for (int x = seam_index; x < width - 1; x++) {
+        for (int x = path[y]; x < width - 1; x++) {
             for (int c = 0; c < cpp; c++) {
                 image_in[(y * org_width + x) * cpp + c] = image_in[(y * org_width + x + 1) * cpp + c];
             }
