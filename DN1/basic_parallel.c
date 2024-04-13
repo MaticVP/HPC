@@ -4,8 +4,8 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "stb_image.h"
-#include "stb_image_write.h"
+#include "../../HPC/DN1/HPC/DN1/stb_image.h"
+#include "../../HPC/DN1/HPC/DN1/stb_image_write.h"
 
 // Use 0 to retain the original number of color channels
 #define COLOR_CHANNELS 0

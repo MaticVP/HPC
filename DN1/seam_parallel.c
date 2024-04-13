@@ -4,8 +4,8 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "stb_image.h"
-#include "stb_image_write.h"
+#include "../../HPC/DN1/HPC/DN1/stb_image.h"
+#include "../../HPC/DN1/HPC/DN1/stb_image_write.h"
 
 // Use 0 to retain the original number of color channels
 #define COLOR_CHANNELS 0
@@ -57,7 +57,7 @@ void gray_scale_image(unsigned char *image_out, const unsigned char *image_in,un
 void calc_image_energy(unsigned char *image_out, const unsigned char *image_in,unsigned int width,
                        unsigned int height,unsigned int org_width)
 {
-#pragma omp parallel for
+#pragma omp parallel for collapse(2)
     for (unsigned int y = 0; y < height; y++) {
         for (unsigned int x = 0; x < width; x++) {
             int Gx = -get_pixel(image_in,y-1,x-1,width,height,0,org_width,1)
@@ -110,67 +110,111 @@ void calc_energy_cumulative_basic(unsigned int *out_image,const unsigned char* e
     }
 }
 
-void seams_basic(unsigned int *path, unsigned int* energy_cumulative_image, unsigned char* image_in,
-                 unsigned int width, unsigned int height,unsigned int org_width, int cpp){
-    unsigned int smallest_index = UINT_MAX;
-    unsigned int smallest_value = UINT_MAX;
-    //find new smallest value
+/**
+ * Finds the smallest values the we can use to start finding the path
+ * */
+void sortIndexs(unsigned int *indexList, unsigned int *valueList,
+                unsigned int width, unsigned int num_seams){
+    int i, j, min_idx;
 
-
-#pragma omp parallel
+    for (i = 0; i < num_seams; i++)
     {
-        unsigned int private_smallest_value = UINT_MAX;
-        unsigned int private_smallest_index = UINT_MAX;
+        min_idx = i;
+        for (j = i+1; j < width; j++)
+            if (valueList[j] < valueList[min_idx])
+                min_idx = j;
 
-        for (int i = 0; i < width; i++) {
-            if (private_smallest_value > energy_cumulative_image[i]) {
-                private_smallest_value = energy_cumulative_image[i];
-                private_smallest_index = i;
-            }
+        if(min_idx != i) {
+            indexList[i] = min_idx;
+            unsigned int temp = valueList[i];
+            valueList[i] = valueList[min_idx];
+            valueList[min_idx] = temp;
         }
-
-#pragma omp critical
-        {
-            if (private_smallest_value < smallest_value) {
-                smallest_value = private_smallest_value;
-                smallest_index = private_smallest_index;
-            }
+        else{
+            indexList[i] = i;
         }
     }
+}
 
-    //find path
-    for(int y=0;y<height;y++){
-        path[y] = smallest_index;
-
-        unsigned int bottom_left = get_pixel_cumulative_ver(energy_cumulative_image,  y + 1,smallest_index - 1, width, height,org_width);
-        unsigned int bottom_mid  = get_pixel_cumulative_ver(energy_cumulative_image,  y + 1,  smallest_index, width, height,org_width);
-        unsigned int bottom_right = get_pixel_cumulative_ver(energy_cumulative_image, y + 1,smallest_index + 1, width, height,org_width);
-        smallest_value = bottom_mid;
-
-        if(bottom_left<smallest_value){
-            smallest_value = bottom_left;
-            smallest_index = smallest_index-1;
-        }
-        if(bottom_right<smallest_value){
-            smallest_index = smallest_index + 1;
-        }
-    }
+void seams_greedy(unsigned int *path,unsigned int *indexList,unsigned char * pathOffset,
+                  unsigned int* energy_cumulative_image,unsigned char* image_in, unsigned int width,
+                  unsigned int height, unsigned int org_width, int cpp, unsigned int num_seams,unsigned int* small) {
 
 
 #pragma omp parallel for
-    for (int y = 0; y < height; y++) {
-        int seam_index = path[y];
-        for (int x = seam_index; x < width - 1; x++) {
-            for (int c = 0; c < cpp; c++) {
-                image_in[(y * org_width + x) * cpp + c] = image_in[(y * org_width + x + 1) * cpp + c];
-            }
-        }
+    for (int i = 0; i < num_seams; i++) {
+        path[i] = indexList[i];
+    }
 
-//        image_in[(seam_index + org_width * y) * CHANNELS]       = (unsigned char) 255;
-//        image_in[((seam_index + org_width * y) * CHANNELS) + 1] = (unsigned char) 0;
-//        image_in[((seam_index + org_width * y) * CHANNELS) + 2] = (unsigned char) 0;
+    //find path
+    //pathOffset is used as a mask that prevents threads from picking the same path
+#pragma omp parallel for
+    for(int i = 0; i < num_seams; i++) {
+        unsigned int smallest_value = UINT_MAX;
+        unsigned int smallest_index = path[i];
+        for (int y = 0; y < height; y++) {
+            path[(y) * num_seams + i] = smallest_index;
+            pathOffset[smallest_index + org_width * (y)] = i+1;
+            int org_index = path[y * num_seams + i];
+            unsigned int bottom_left = get_pixel_cumulative_ver(energy_cumulative_image, y + 1, smallest_index - 1,
+                                                                width, height, org_width);
+            unsigned int bottom_mid = get_pixel_cumulative_ver(energy_cumulative_image, y + 1, smallest_index, width,
+                                                               height, org_width);
+            unsigned int bottom_right = get_pixel_cumulative_ver(energy_cumulative_image, y + 1, smallest_index + 1,
+                                                                 width, height, org_width);
+            smallest_value = bottom_mid;
+
+            if ((bottom_left < smallest_value)
+                && (org_index - 1) >= 0
+                && (pathOffset[(org_index - 1) + org_width * (y + 1)] == 0)) {
+                smallest_value = bottom_left;
+                smallest_index = smallest_index - 1;
+            }
+            if ((bottom_right < smallest_value)
+                && (org_index + 1) < width
+                && ((pathOffset[(org_index + 1) + org_width * (y + 1)]) == 0)) {
+                smallest_index = smallest_index + 1;
+            }
+
+        }
+    }
+
+
+//    With every shift you must correct the path since the pixels moved to the right
+    for (int i = 0; i < num_seams; i++) {
+//#pragma omp parallel for
+        for (int y = 0; y < height; y++) {
+            int seam_index = path[(y) * num_seams + i];
+            int remember_j = 0;
+            int offset = 0;
+
+            for (int j = 0; j < num_seams; ++j) {
+                if(seam_index>path[(y) * num_seams + j]){
+                    seam_index = path[(y) * num_seams + j];
+                    remember_j = j;
+                }
+            }
+
+            for (int j = 0; j < num_seams; ++j) {
+                if(small[y*num_seams+j]>seam_index){
+                    offset++;
+                }
+            }
+
+            for (int x = 0; x < seam_index -offset; x++) {
+                for (int c = 0; c < cpp; c++) {
+                    image_in[(y * org_width + x) * cpp + c] = image_in[(y * org_width + x + 1) * cpp + c];
+                }
+            }
+
+            path[(y) * num_seams + remember_j] = UINT_MAX;
+            small[y*num_seams+i] = seam_index;
+        }
+        width--;
     }
 }
+
+
 
 
 int main(int argc, char *argv[])
@@ -204,9 +248,16 @@ int main(int argc, char *argv[])
     unsigned char *image_gray = (unsigned char *)malloc(width * height * sizeof(unsigned char));
     unsigned char *energy_image = (unsigned char *)malloc(width * height * sizeof(unsigned char));
     unsigned int *energy_cumulative_image = (unsigned int *)malloc(width * height * sizeof(unsigned int));
-    //unsigned int *topIndexOrder = (unsigned int *)malloc(width * sizeof(unsigned int));
-    unsigned int *path = (unsigned int *)malloc(height * sizeof(unsigned int));
+    unsigned int *indexList = (unsigned int *)malloc(width * sizeof(unsigned int));
+    unsigned int *valueList = (unsigned int *)malloc(width * sizeof(unsigned int));
+    unsigned char *pathVisited = (unsigned char *)malloc(height * width * sizeof(unsigned char ));
+    unsigned int *path = (unsigned int *)malloc(num_seams * height* sizeof(unsigned int));
+    unsigned int *smallestPathIndex = (unsigned int *)malloc(height* sizeof(unsigned int));
+    unsigned int *small = (unsigned int *)malloc(height*num_seams* sizeof(unsigned int));
 
+    memset(pathVisited, 0, height * width * sizeof(unsigned char ));
+    memset(smallestPathIndex,UINT_MAX,height * sizeof(unsigned int));
+    memset(small,UINT_MAX,height*num_seams* sizeof(unsigned int));
     //Print the number of threads
 #pragma omp parallel
     {
@@ -218,19 +269,29 @@ int main(int argc, char *argv[])
     // Just copy the input image into output
     double start = omp_get_wtime();
     int org_width = width;
-    for(int i=0; i < num_seams; i++) {
-        gray_scale_image(image_gray, image_in, width, height,org_width,cpp);
-        //stbi_write_png("output_grayImage.png", width, height, 1, image_gray, org_width);
-        calc_image_energy(energy_image, image_gray, width, height,org_width);
-        //stbi_write_png("output_energyImage.png", width, height, 1, energy_image, org_width);
-        calc_energy_cumulative_basic(energy_cumulative_image, energy_image, width, height,org_width);
-        //stbi_write_png("output_energyCumImage.png", width, height, 1, energy_cumulative_image, org_width);
-        seams_basic(path, energy_cumulative_image,image_in, width, height,org_width,cpp);
-        width--;
 
-    }
+    gray_scale_image(image_gray, image_in, width, height,org_width,cpp);
+    //stbi_write_png("output_grayImage.png", width, height, 1, image_gray, org_width);
+    calc_image_energy(energy_image, image_gray, width, height,org_width);
+    stbi_write_png("output_energyImage.png", width, height, 1, energy_image, org_width);
+    calc_energy_cumulative_basic(energy_cumulative_image, energy_image, width, height,org_width);
+    //stbi_write_png("output_energyCumImage.png", width, height, 1, energy_cumulative_image, org_width);
 
 #pragma omp parallel for
+    for (int x = 0; x < width; x++) {
+        valueList[x] = energy_cumulative_image[x];
+    }
+    // sort values to use for index paths
+    sortIndexs(indexList, valueList, width, num_seams);
+    seams_greedy(path,indexList, pathVisited,
+                 energy_cumulative_image,image_in, width,height, org_width,
+                 cpp, num_seams,small);
+
+    width-=num_seams;
+
+
+
+#pragma omp parallel for collapse(3)
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
             for (int c = 0; c < cpp; c++) {
@@ -256,14 +317,17 @@ int main(int argc, char *argv[])
         stbi_write_png(image_out_name, width, height, cpp, image_out, (width) * cpp);
     else if (!strcmp(file_type, "jpg"))
         stbi_write_jpg(image_out_name, width, height, cpp, image_out, 100);
-    else if (!strcmp(file_type, "bmp"))
-        stbi_write_bmp(image_out_name, width, height, cpp, image_out);
+    else if (!strcmp(file_type, "bmp")) {
+        stbi_write_bmp("ssafas.bmp", width, height, cpp, image_out);
+        stbi_write_bmp(image_out_name, org_width, height, cpp, image_in);
+    }
     else
         printf("Error: Unknown image format %s! Only png, bmp, or bmp supported.\n", file_type);
 
     // Release the memory
     free(image_in);
     free(image_out);
+
 
     return 0;
 }

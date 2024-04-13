@@ -1,2 +1,4 @@
 .idea
 cmake-build-debug
+./DN2/.idea
+./DN2/cmake-build-debug
