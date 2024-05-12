@@ -23,13 +23,15 @@ __global__ void calc_new_pixel_value(int* cum_histogram, const int width, const 
     }
 
     int min = 0;
+    int min_index = 0;
     int max_i = width * height;
 
     for (int color = 0; !min && color < 256; ++color) {
         min = cum_histogram[color + 256 * blockIdx.x];
+        min_index = color;
     }
 
-    for (int color = threadIdx.x; color < 256; color += blockDim.x) {
+    for (int color = min_index+threadIdx.x; color < 256; color += blockDim.x) {
         //printf("Investigating block %d, thread %d\n", blockIdx.x, color);
         int value = cum_histogram[color + 256 * blockIdx.x];
         double upper_frac = value - min;
@@ -82,9 +84,6 @@ void histogram_norm_cuda(unsigned char* image, int width, int height, int cpp) {
     dim3 gridSize((height - 1) / blockSize.x + 1, (width - 1) / blockSize.y + 1);
     //dim3 gridSize(1, 1);
 
-    dim3 blockSizeCum(1, 1);
-    dim3 gridSizeCum(1, 1);
-
     dim3 blockSizeNewValue(32, 32);
     dim3 gridSizeNewValue((height - 1) / blockSizeNewValue.x + 1, (width - 1) / blockSizeNewValue.y + 1);
 
@@ -113,19 +112,23 @@ void histogram_norm_cuda(unsigned char* image, int width, int height, int cpp) {
     //checkCudaErrors(cudaMemcpy(histograms_temp, histograms, cpp * 256 * sizeof(int), cudaMemcpyDeviceToHost));
 
 #if CUDA_PARALLEL_CUM
-    cumulative_histogram_parallel << <gridSizeCum, blockSizeCum >> > (cumulative_histogram_pointer, histograms, cpp);
+    dim3 blockSizeCum(256);
+    dim3 gridSizeCum(cpp);
+    cumulative_histogram_parallel << <gridSizeCum, blockSizeCum >> > (cumulative_histogram_pointer, histograms,cpp);
 #else
+    dim3 blockSizeCum((1, 1));
+    dim3 gridSizeCum(1);
     cumulative_histogram_basic << <gridSizeCum, blockSizeCum >> > (cumulative_histogram_pointer, histograms, cpp);
 #endif
 
-    //checkCudaErrors(cudaMemcpy(histograms_temp, cumulative_histogram_pointer, cpp * 256 * sizeof(int), cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMemcpy(histograms_temp, cumulative_histogram_pointer, cpp * 256 * sizeof(int), cudaMemcpyDeviceToHost));
 
     dim3 blockSize_new(256);
     dim3 numBlocks_new(cpp);
 
     calc_new_pixel_value << <numBlocks_new, blockSize_new >> > (cumulative_histogram_pointer, width, height);
 
-    //checkCudaErrors(cudaMemcpy(histograms_temp, cumulative_histogram_pointer, cpp * 256 * sizeof(int), cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMemcpy(histograms_temp, cumulative_histogram_pointer, cpp * 256 * sizeof(int), cudaMemcpyDeviceToHost));
 
     set_new_values << <gridSize, blockSize >> > (image_cuda,cumulative_histogram_pointer, width, height, cpp);
 
